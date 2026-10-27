@@ -1,0 +1,14 @@
+{
+  "name": "it-bez-paniki",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Интернет, HTTP и системная аналитика с нуля — курс на два вечера",
+  "scripts": {
+    "dev": "node server.cjs --open",
+    "start": "node server.cjs --open",
+    "build": "node scripts/build.cjs",
+    "check": "node scripts/check.cjs",
+    "test": "node --test"
+  },
+  "engines": { "node": ">=18" }
+}

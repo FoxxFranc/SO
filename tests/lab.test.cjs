@@ -1,0 +1,28 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const {LabEngine}=require('../lab.js');
+const headers='Accept: application/json\nContent-Type: application/json';
+const send=(engine,method,url,body,custom=headers)=>engine.execute({method,url,headers:custom,body:body===undefined?'':typeof body==='string'?body:JSON.stringify(body)});
+
+test('GET фильтрует меню и не меняет состояние',()=>{const e=new LabEngine();const before=JSON.stringify(e.orders);const r=send(e,'GET','/api/menu?category=drinks');assert.equal(r.status,200);assert.equal(r.body.items.length,2);assert.equal(JSON.stringify(e.orders),before);});
+test('Пустая выборка меню — 200 и пустой список',()=>{const r=send(new LabEngine(),'GET','/api/menu?q=неттакогоблюда');assert.equal(r.status,200);assert.deepEqual(r.body.items,[]);});
+test('POST создаёт, Location ведёт к читаемому заказу',()=>{const e=new LabEngine();const r=send(e,'POST','/api/orders',{itemId:7,quantity:2});assert.equal(r.status,201);assert.equal(r.headers.Location,'/api/orders/43');assert.equal(send(e,'GET',r.headers.Location).body.quantity,2);});
+test('Повтор POST создаёт второй ресурс в этой модели',()=>{const e=new LabEngine();const a=send(e,'POST','/api/orders',{itemId:7,quantity:2});const b=send(e,'POST','/api/orders',{itemId:7,quantity:2});assert.notEqual(a.body.id,b.body.id);assert.equal(e.orders.length,3);});
+test('PUT заменяет полное редактируемое представление',()=>{const e=new LabEngine();const r=send(e,'PUT','/api/orders/42',{itemId:3,quantity:4});assert.equal(r.status,200);assert.deepEqual(r.body,{id:42,itemId:3,quantity:4,status:'new'});assert.deepEqual(send(e,'PUT','/api/orders/42',{itemId:3,quantity:4}).body,r.body);});
+test('Неполный PUT не меняет запись',()=>{const e=new LabEngine();const before=JSON.stringify(e.orders);assert.equal(send(e,'PUT','/api/orders/42',{quantity:4}).status,422);assert.equal(JSON.stringify(e.orders),before);});
+test('PATCH оставляет пропущенное поле и повторяется идемпотентно',()=>{const e=new LabEngine();const r=send(e,'PATCH','/api/orders/42',{quantity:4});assert.equal(r.body.itemId,7);assert.equal(r.body.quantity,4);assert.deepEqual(send(e,'PATCH','/api/orders/42',{quantity:4}).body,r.body);});
+test('DELETE возвращает 204 без тела; повтор 404, итог тот же',()=>{const e=new LabEngine();const r=send(e,'DELETE','/api/orders/42');assert.equal(r.status,204);assert.equal(r.body,undefined);assert.equal(r.headers['Content-Type'],undefined);assert.equal(send(e,'DELETE','/api/orders/42').status,404);assert.equal(e.orders.length,0);});
+test('Некорректный JSON даёт 400 без изменения данных',()=>{const e=new LabEngine();assert.equal(send(e,'POST','/api/orders','{"itemId":7,}').status,400);assert.equal(e.orders.length,1);});
+test('Правильный JSON с неправильным типом даёт 422',()=>{assert.equal(send(new LabEngine(),'POST','/api/orders',{itemId:7,quantity:'2'}).status,422);});
+test('Проверяется диапазон и целочисленность quantity',()=>{for(const quantity of [0,-1,11,1.2,null])assert.equal(send(new LabEngine(),'POST','/api/orders',{itemId:7,quantity}).status,422);});
+test('Нельзя записать неизвестное блюдо',()=>{assert.equal(send(new LabEngine(),'POST','/api/orders',{itemId:999,quantity:1}).status,422);});
+test('Нельзя менять серверные поля',()=>{assert.equal(send(new LabEngine(),'PATCH','/api/orders/42',{status:'paid'}).status,422);});
+test('Пустой PATCH и неправильная структура отвергаются',()=>{for(const body of [{},null,[],4])assert.equal(send(new LabEngine(),'PATCH','/api/orders/42',JSON.stringify(body)).status,422);});
+test('Неизвестный заказ и путь дают 404',()=>{assert.equal(send(new LabEngine(),'GET','/api/orders/999').status,404);assert.equal(send(new LabEngine(),'GET','/wrong').status,404);});
+test('Метод не поддерживается: 405 и Allow',()=>{const r=send(new LabEngine(),'POST','/api/menu',{itemId:7,quantity:1});assert.equal(r.status,405);assert.equal(r.headers.Allow,'GET');});
+test('Без Content-Type JSON запись не выполняется',()=>{assert.equal(send(new LabEngine(),'POST','/api/orders',{itemId:7,quantity:1},'Accept: application/json').status,415);});
+test('Неподдерживаемый формат ответа даёт 406',()=>{assert.equal(send(new LabEngine(),'GET','/api/menu',undefined,'Accept: text/html').status,406);});
+test('Заголовки регистронезависимы',()=>{assert.equal(send(new LabEngine(),'POST','/api/orders',{itemId:7,quantity:1},'content-type: application/json\naccept: application/json').status,201);});
+test('Недопустимый URL и заголовок дают 400',()=>{assert.equal(send(new LabEngine(),'GET','https://other.example/').status,400);assert.equal(send(new LabEngine(),'GET','/api/menu#test').status,400);assert.equal(send(new LabEngine(),'GET','/api/menu',undefined,'bad header').status,400);});
+test('Ответ-снимок не меняется после следующего PATCH',()=>{const e=new LabEngine();const first=send(e,'GET','/api/orders/42');send(e,'PATCH','/api/orders/42',{quantity:8});assert.equal(first.body.quantity,1);});
+test('Сброс восстанавливает заказ и счётчик',()=>{const e=new LabEngine();send(e,'DELETE','/api/orders/42');e.reset();assert.equal(e.orders[0].id,42);assert.equal(e.nextId,43);});
